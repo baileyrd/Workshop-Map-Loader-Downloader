@@ -68,4 +68,6 @@ manager-only mode (download/organize maps; use "Open Folder" and load in-game).
 ## CI
 
 `.github/workflows/ci.yml` runs `cargo fmt --check`, `cargo clippy -D warnings`,
-`cargo test`, and a release build of the app on Linux and Windows.
+`cargo test`, and a release build of the app on Linux and Windows. A separate
+`controller` job builds and clippy-checks the gamepad feature on Linux (after
+installing `libudev-dev`) and Windows.
