@@ -16,6 +16,7 @@ toml.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
+tokio-tungstenite.workspace = true
 futures-util.workspace = true
 zip.workspace = true
 directories.workspace = true
