@@ -9,6 +9,7 @@
 //! - [`library`]  — scan the maps folder, parse `.json` sidecars, model a `Map`.
 //! - [`catalog`]  — search/download metadata from rocketleaguemaps.us.
 //! - [`download`] — streamed downloads with progress + in-process zip extraction.
+//! - [`install`]  — install a catalog map into the local library.
 //! - [`config`]   — typed config, serialized as TOML (migrates the old `.cfg`).
 //! - [`paths`]    — locate the game install, `CookedPCConsole`, and app dirs.
 //! - [`bakkesmod`]— RCON bridge that sends `load_workshop` to a running game.
@@ -18,6 +19,7 @@ pub mod catalog;
 pub mod config;
 pub mod download;
 pub mod error;
+pub mod install;
 pub mod library;
 pub mod paths;
 
