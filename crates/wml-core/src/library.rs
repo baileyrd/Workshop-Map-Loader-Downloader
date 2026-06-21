@@ -106,7 +106,10 @@ pub fn scan_map_folder(folder: &Path) -> Result<Map> {
 
         // The sidecar is named after the folder, e.g. `MyMap/MyMap.json`.
         if meta.is_none() && ext_matches(&path, &["json"]) {
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
             if stem == folder_name {
                 if let Ok(text) = std::fs::read_to_string(&path) {
                     meta = serde_json::from_str::<MapMeta>(&text).ok();
@@ -172,7 +175,12 @@ pub fn write_meta(map_folder: &Path, name: &str, meta: &MapMeta) -> Result<PathB
 /// Turn an arbitrary map name into a filesystem-safe folder name.
 pub fn safe_folder_name(name: &str) -> String {
     let mut out: String = name.replace(' ', "_");
-    out.retain(|c| !matches!(c, '/' | '\\' | '?' | ':' | '*' | '"' | '<' | '>' | '|' | '-' | '#'));
+    out.retain(|c| {
+        !matches!(
+            c,
+            '/' | '\\' | '?' | ':' | '*' | '"' | '<' | '>' | '|' | '-' | '#'
+        )
+    });
     out
 }
 

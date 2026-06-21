@@ -14,10 +14,13 @@ use std::sync::Arc;
 
 use wml_core::bakkesmod::BridgeStatus;
 use wml_core::catalog::{CatalogClient, MapResult, Release};
-use wml_core::config::Config;
+use wml_core::config::{Config, Language};
 use wml_core::download::Progress;
 use wml_core::install::InstallStage;
 use wml_core::library::Map;
+
+use crate::controller::{Action, Controller};
+use crate::i18n::{strings, Strings};
 
 /// Which top-level tab is visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -95,6 +98,11 @@ pub struct WmlApp {
     launch_tx: Sender<LaunchMsg>,
     launch_rx: Receiver<LaunchMsg>,
 
+    // Controller (no-op unless the `controller` feature is enabled)
+    controller: Controller,
+    /// Selection index into the filtered library list, for controller nav.
+    selected: usize,
+
     status: String,
 }
 
@@ -134,6 +142,8 @@ impl WmlApp {
             launching: false,
             launch_tx,
             launch_rx,
+            controller: Controller::new(),
+            selected: 0,
             status: String::new(),
         }
     }
@@ -228,12 +238,8 @@ impl WmlApp {
         let done_ctx = ctx.clone();
 
         self.rt.spawn(async move {
-            let result = wml_core::install::install_map(
-                &client,
-                &maps_folder,
-                &map,
-                &release,
-                |stage| {
+            let result =
+                wml_core::install::install_map(&client, &maps_folder, &map, &release, |stage| {
                     let msg = match stage {
                         InstallStage::Downloading(p) => DownloadMsg::Progress(p),
                         InstallStage::Extracting => DownloadMsg::Extracting,
@@ -241,9 +247,8 @@ impl WmlApp {
                     };
                     let _ = progress_tx.send(msg);
                     progress_ctx.request_repaint();
-                },
-            )
-            .await;
+                })
+                .await;
 
             let final_msg = match result {
                 Ok(path) => DownloadMsg::Done(path),
@@ -266,7 +271,11 @@ impl WmlApp {
                 DownloadMsg::Done(path) => {
                     self.downloading = false;
                     self.download_progress = None;
-                    self.status = format!("Installed \"{}\" to {}", self.download_label, path.display());
+                    self.status = format!(
+                        "Installed \"{}\" to {}",
+                        self.download_label,
+                        path.display()
+                    );
                     self.refresh_maps();
                 }
                 DownloadMsg::Error(e) => {
@@ -347,16 +356,48 @@ impl eframe::App for WmlApp {
         self.poll_bridge();
         self.poll_launch();
 
+        let mut settings_changed = false;
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
+            let s = strings(self.config.language);
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.tab, Tab::Library, "Map Loader");
-                ui.selectable_value(&mut self.tab, Tab::Search, "Search Workshop");
+                ui.selectable_value(&mut self.tab, Tab::Library, s.tab_library);
+                ui.selectable_value(&mut self.tab, Tab::Search, s.tab_search);
+
+                ui.separator();
+                ui.label(s.language);
+                let mut lang = self.config.language;
+                egui::ComboBox::from_id_salt("lang")
+                    .selected_text(match lang {
+                        Language::English => "English",
+                        Language::French => "Français",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut lang, Language::English, "English");
+                        ui.selectable_value(&mut lang, Language::French, "Français");
+                    });
+                if lang != self.config.language {
+                    self.config.language = lang;
+                    settings_changed = true;
+                }
+
+                if ui
+                    .checkbox(&mut self.config.controller_enabled, s.controller)
+                    .changed()
+                {
+                    settings_changed = true;
+                }
             });
         });
+        if settings_changed {
+            self.save_config();
+        }
 
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             if self.downloading {
-                let frac = self.download_progress.and_then(|p| p.fraction()).unwrap_or(0.0);
+                let frac = self
+                    .download_progress
+                    .and_then(|p| p.fraction())
+                    .unwrap_or(0.0);
                 let text = match self.download_progress {
                     Some(p) => match p.total {
                         Some(t) => format!("{} / {}", human_bytes(p.downloaded), human_bytes(t)),
@@ -386,21 +427,22 @@ impl eframe::App for WmlApp {
 impl WmlApp {
     fn library_tab(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        let s = strings(self.config.language);
 
         ui.horizontal(|ui| {
-            ui.label("Maps folder:");
+            ui.label(s.maps_folder);
             let mut folder = self.config.maps_folder.display().to_string();
             if ui.text_edit_singleline(&mut folder).changed() {
                 self.config.maps_folder = PathBuf::from(folder);
             }
-            if ui.button("Browse…").clicked() {
+            if ui.button(s.browse).clicked() {
                 if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                     self.config.maps_folder = dir;
                     self.save_config();
                     self.refresh_maps();
                 }
             }
-            if ui.button("Refresh Maps").clicked() {
+            if ui.button(s.refresh_maps).clicked() {
                 self.refresh_maps();
             }
         });
@@ -408,66 +450,104 @@ impl WmlApp {
         // BakkesMod bridge status + manual recheck.
         ui.horizontal(|ui| {
             let (color, text) = match self.bridge_status {
-                BridgeStatus::Connected => (egui::Color32::GREEN, "Connected"),
-                BridgeStatus::Unavailable => (egui::Color32::YELLOW, "Not reachable"),
-                BridgeStatus::Disabled => (egui::Color32::GRAY, "Disabled"),
+                BridgeStatus::Connected => (egui::Color32::GREEN, s.connected),
+                BridgeStatus::Unavailable => (egui::Color32::YELLOW, s.not_reachable),
+                BridgeStatus::Disabled => (egui::Color32::GRAY, s.disabled),
             };
-            ui.label("BakkesMod:");
+            ui.label(s.bakkesmod);
             ui.colored_label(color, text);
-            if ui.button("Recheck").clicked() {
+            if ui.button(s.recheck).clicked() {
                 self.start_probe(&ctx);
             }
             if self.bridge_status != BridgeStatus::Connected {
-                ui.label("— in-game launch unavailable; use Open Folder and load in-game.");
+                ui.label(s.launch_unavailable);
             }
         });
 
         ui.separator();
 
         ui.horizontal(|ui| {
-            ui.label("Search:");
+            ui.label(s.filter);
             ui.text_edit_singleline(&mut self.filter);
         });
 
         // Deferred actions (avoid borrowing self while iterating self.maps).
         let mut to_launch: Option<(String, PathBuf)> = None;
         let mut to_open: Option<PathBuf> = None;
-        let can_launch = self.bridge_status == BridgeStatus::Connected && !self.launching;
+        let bridge_connected = self.bridge_status == BridgeStatus::Connected;
+        let can_launch = bridge_connected && !self.launching;
+        let controller_on = self.config.controller_enabled;
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        // Controller navigation over the current filtered list.
+        {
             let filtered = wml_core::library::filter_maps(&self.maps, &self.filter);
-            for map in filtered {
-                ui.group(|ui| {
-                    ui.label(egui::RichText::new(&map.name).strong());
-                    if !map.author.is_empty() {
-                        ui.label(format!("By {}", map.author));
-                    }
-                    if map.needs_extraction() {
-                        ui.colored_label(egui::Color32::YELLOW, "Needs extraction");
-                    }
-
-                    ui.horizontal(|ui| {
-                        let playable = map.is_loadable();
-                        let play = ui.add_enabled(
-                            playable && can_launch,
-                            egui::Button::new("▶ Play"),
-                        );
-                        if play.clicked() {
-                            if let Some(upk) = &map.upk_file {
-                                to_launch = Some((map.name.clone(), upk.clone()));
+            let count = filtered.len();
+            if controller_on {
+                for action in self.controller.poll() {
+                    match action {
+                        Action::Up => self.selected = self.selected.saturating_sub(1),
+                        Action::Down => {
+                            if count > 0 {
+                                self.selected = (self.selected + 1).min(count - 1);
                             }
                         }
-                        if playable && self.bridge_status != BridgeStatus::Connected {
-                            play.on_hover_text("BakkesMod not connected");
+                        Action::Activate => {
+                            if let Some(m) = filtered.get(self.selected) {
+                                if m.is_loadable() && can_launch {
+                                    if let Some(upk) = &m.upk_file {
+                                        to_launch = Some((m.name.clone(), upk.clone()));
+                                    }
+                                }
+                            }
                         }
-                        if ui.button("Open Folder").clicked() {
-                            to_open = Some(map.folder.clone());
-                        }
-                    });
-                    // TODO: preview image, delete, context menu.
-                });
+                    }
+                }
+                if self.controller.connected() {
+                    ctx.request_repaint();
+                }
             }
-        });
+            if self.selected >= count {
+                self.selected = count.saturating_sub(1);
+            }
+
+            let selected_idx = self.selected;
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for (i, map) in filtered.iter().enumerate() {
+                    let highlight = controller_on && i == selected_idx;
+                    let frame = if highlight {
+                        egui::Frame::group(ui.style()).fill(ui.visuals().selection.bg_fill)
+                    } else {
+                        egui::Frame::group(ui.style())
+                    };
+                    frame.show(ui, |ui| {
+                        ui.label(egui::RichText::new(&map.name).strong());
+                        if !map.author.is_empty() {
+                            ui.label(format!("{} {}", s.by, map.author));
+                        }
+                        if map.needs_extraction() {
+                            ui.colored_label(egui::Color32::YELLOW, s.needs_extraction);
+                        }
+
+                        ui.horizontal(|ui| {
+                            let playable = map.is_loadable();
+                            let play =
+                                ui.add_enabled(playable && can_launch, egui::Button::new(s.play));
+                            if play.clicked() {
+                                if let Some(upk) = &map.upk_file {
+                                    to_launch = Some((map.name.clone(), upk.clone()));
+                                }
+                            }
+                            if playable && !bridge_connected {
+                                play.on_hover_text(s.not_connected);
+                            }
+                            if ui.button(s.open_folder).clicked() {
+                                to_open = Some(map.folder.clone());
+                            }
+                        });
+                    });
+                }
+            });
+        }
 
         if let Some((name, upk)) = to_launch {
             self.start_launch(&ctx, name, upk);
@@ -481,22 +561,23 @@ impl WmlApp {
 
     fn search_tab(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        let s = strings(self.config.language);
         // Page to (re-)search this frame, decided by the controls below.
         let mut start: Option<u32> = None;
 
         ui.horizontal(|ui| {
-            ui.label("Search a workshop:");
+            ui.label(s.search_a_workshop);
             let resp = ui.text_edit_singleline(&mut self.search_query);
             let submitted = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if ui
-                .add_enabled(!self.searching, egui::Button::new("Search"))
+                .add_enabled(!self.searching, egui::Button::new(s.search))
                 .clicked()
                 || submitted
             {
                 start = Some(1);
             }
             if ui
-                .add_enabled(!self.searching, egui::Button::new("Browse"))
+                .add_enabled(!self.searching, egui::Button::new(s.browse_maps))
                 .clicked()
             {
                 self.search_query.clear();
@@ -507,14 +588,14 @@ impl WmlApp {
         ui.horizontal(|ui| {
             if self.page > 1
                 && ui
-                    .add_enabled(!self.searching, egui::Button::new("◀ Prev"))
+                    .add_enabled(!self.searching, egui::Button::new(s.prev))
                     .clicked()
             {
                 start = Some(self.page - 1);
             }
-            ui.label(format!("Page {}", self.page));
+            ui.label(format!("{} {}", s.page, self.page));
             if ui
-                .add_enabled(!self.searching, egui::Button::new("Next ▶"))
+                .add_enabled(!self.searching, egui::Button::new(s.next))
                 .clicked()
             {
                 start = Some(self.page + 1);
@@ -529,7 +610,7 @@ impl WmlApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 for (i, result) in self.results.iter().enumerate() {
-                    render_result_card(ui, result, i, download_enabled, &mut download_idx);
+                    render_result_card(ui, result, i, download_enabled, s, &mut download_idx);
                 }
             });
         });
@@ -540,7 +621,7 @@ impl WmlApp {
         }
         if let Some(i) = download_idx {
             match self.results[i].releases.len() {
-                0 => self.status = "This map has no downloadable release.".into(),
+                0 => self.status = s.no_release.into(),
                 1 => {
                     let map = self.results[i].clone();
                     let release = map.releases[0].clone();
@@ -564,8 +645,9 @@ impl WmlApp {
         let mut open = true;
         let mut chosen: Option<usize> = None;
         let busy = self.downloading;
+        let s = strings(self.config.language);
         let results = &self.results;
-        egui::Window::new(format!("Releases — {}", results[idx].name))
+        egui::Window::new(format!("{} — {}", s.releases, results[idx].name))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
@@ -576,10 +658,7 @@ impl WmlApp {
                     } else {
                         rel.tag_name.clone()
                     };
-                    if ui
-                        .add_enabled(!busy, egui::Button::new(label))
-                        .clicked()
-                    {
+                    if ui.add_enabled(!busy, egui::Button::new(label)).clicked() {
                         chosen = Some(ri);
                     }
                 }
@@ -603,6 +682,7 @@ fn render_result_card(
     result: &MapResult,
     index: usize,
     enabled: bool,
+    s: &Strings,
     download_idx: &mut Option<usize>,
 ) {
     ui.group(|ui| {
@@ -622,12 +702,12 @@ fn render_result_card(
                 title.on_hover_text(&result.description);
             }
             if !result.author.is_empty() {
-                ui.label(format!("By {}", result.author));
+                ui.label(format!("{} {}", s.by, result.author));
             }
 
             let has_release = !result.releases.is_empty();
             if ui
-                .add_enabled(enabled && has_release, egui::Button::new("Download"))
+                .add_enabled(enabled && has_release, egui::Button::new(s.download))
                 .clicked()
             {
                 *download_idx = Some(index);

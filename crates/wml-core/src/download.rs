@@ -97,9 +97,15 @@ mod tests {
 
     #[test]
     fn progress_fraction() {
-        let p = Progress { downloaded: 50, total: Some(100) };
+        let p = Progress {
+            downloaded: 50,
+            total: Some(100),
+        };
         assert_eq!(p.fraction(), Some(0.5));
-        let p = Progress { downloaded: 50, total: None };
+        let p = Progress {
+            downloaded: 50,
+            total: None,
+        };
         assert_eq!(p.fraction(), None);
     }
 }

@@ -42,7 +42,25 @@ pub fn detect_rocket_league_install() -> Option<PathBuf> {
 
 /// Given a Rocket League install root, the path to `CookedPCConsole`.
 pub fn cooked_pc_console(rl_install: &Path) -> PathBuf {
-    rl_install
-        .join("TAGame")
-        .join("CookedPCConsole")
+    rl_install.join("TAGame").join("CookedPCConsole")
+}
+
+/// Likely locations of the plugin's legacy `workshopmaploader.cfg`, for one-time
+/// migration. Windows-only for now (BakkesMod's data dir lives under `%APPDATA%`);
+/// other platforms return an empty list.
+pub fn legacy_cfg_candidates() -> Vec<PathBuf> {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut candidates = Vec::new();
+    #[cfg(windows)]
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        candidates.push(
+            PathBuf::from(appdata)
+                .join("bakkesmod")
+                .join("bakkesmod")
+                .join("data")
+                .join("WorkshopMapLoader")
+                .join("workshopmaploader.cfg"),
+        );
+    }
+    candidates
 }

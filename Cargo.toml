@@ -34,3 +34,11 @@ eframe = "0.29"
 egui = "0.29"
 egui_extras = { version = "0.29", features = ["image", "http"] }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+# Optional gamepad support (wml-app `controller` feature). Links libudev on Linux.
+gilrs = "0.10"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

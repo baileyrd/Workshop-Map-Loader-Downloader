@@ -154,7 +154,12 @@ impl CatalogClient {
 
 fn into_release(r: GitlabRelease) -> Release {
     // The plugin treats links[0] as the preview image and links[1] as the zip.
-    let preview_url = r.assets.links.first().map(|l| l.url.clone()).unwrap_or_default();
+    let preview_url = r
+        .assets
+        .links
+        .first()
+        .map(|l| l.url.clone())
+        .unwrap_or_default();
     let (download_url, raw_zip_name) = r
         .assets
         .links
@@ -175,7 +180,12 @@ fn into_release(r: GitlabRelease) -> Release {
 /// Strip characters that are unsafe in a file name.
 fn sanitize_zip_name(name: &str) -> String {
     name.chars()
-        .filter(|c| !matches!(c, '/' | '\\' | '?' | ':' | '*' | '"' | '<' | '>' | '|' | '#' | '\'' | '`'))
+        .filter(|c| {
+            !matches!(
+                c,
+                '/' | '\\' | '?' | ':' | '*' | '"' | '<' | '>' | '|' | '#' | '\'' | '`'
+            )
+        })
         .collect()
 }
 

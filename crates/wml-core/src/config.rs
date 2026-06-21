@@ -3,11 +3,12 @@
 //! Replaces the plugin's hand-rolled `workshopmaploader.cfg` format. A migration
 //! helper for that old format can be added later (see [`Config::migrate_legacy_cfg`]).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Result, WmlError};
+use crate::error::Result;
 
 /// UI language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -109,10 +110,78 @@ impl Config {
         Ok(())
     }
 
-    /// Migrate the plugin's legacy `workshopmaploader.cfg` (key = "value" lines)
-    /// into a [`Config`]. Not yet implemented.
-    pub fn migrate_legacy_cfg(_legacy: &Path) -> Result<Self> {
-        Err(WmlError::NotImplemented("Config::migrate_legacy_cfg"))
+    /// Load `config_path` if it exists; otherwise migrate the first existing
+    /// legacy `.cfg` candidate (saving the result to `config_path`); otherwise
+    /// return defaults.
+    pub fn load_or_migrate(config_path: &Path, legacy_candidates: &[PathBuf]) -> Result<Self> {
+        if config_path.exists() {
+            return Self::load(config_path);
+        }
+        for candidate in legacy_candidates {
+            if candidate.exists() {
+                let cfg = Self::migrate_legacy_cfg(candidate)?;
+                cfg.save(config_path)?;
+                return Ok(cfg);
+            }
+        }
+        Ok(Self::default())
+    }
+
+    /// Migrate the plugin's legacy `workshopmaploader.cfg` (lines of the form
+    /// `Key = "value"`) into a [`Config`].
+    pub fn migrate_legacy_cfg(legacy: &Path) -> Result<Self> {
+        let text = std::fs::read_to_string(legacy)?;
+        Ok(Self::from_legacy_str(&text))
+    }
+
+    /// Parse the legacy cfg format. Unknown/missing keys keep their defaults, so
+    /// this tolerates the several historical cfg layouts the plugin produced.
+    fn from_legacy_str(text: &str) -> Self {
+        let mut values: HashMap<&str, &str> = HashMap::new();
+        for line in text.lines() {
+            let Some((key, rest)) = line.split_once('=') else {
+                continue;
+            };
+            // The value is whatever sits between the first and last quote.
+            if let (Some(a), Some(b)) = (rest.find('"'), rest.rfind('"')) {
+                if b > a {
+                    values.insert(key.trim(), &rest[a + 1..b]);
+                }
+            }
+        }
+
+        let mut cfg = Self::default();
+        if let Some(v) = values.get("MapsFolderPath") {
+            cfg.maps_folder = PathBuf::from(v);
+        }
+        if values.get("Language") == Some(&"1") {
+            cfg.language = Language::French;
+        }
+        if values.get("MapsDisplayMode") == Some(&"1") {
+            cfg.display_mode = DisplayMode::Tiles;
+        }
+        if let Some(n) = values.get("nbTilesPerLine").and_then(|v| v.parse().ok()) {
+            cfg.tiles_per_line = n;
+        }
+        if let Some(n) = values
+            .get("ControllerSensitivity")
+            .and_then(|v| v.parse().ok())
+        {
+            cfg.controller_sensitivity = n;
+        }
+        if let Some(n) = values
+            .get("ControllerScrollSensitivity")
+            .and_then(|v| v.parse().ok())
+        {
+            cfg.controller_scroll_sensitivity = n;
+        }
+        cfg.controller_enabled = values.get("UseController") == Some(&"1");
+        cfg.antifreeze_fix = values.get("EnableAntiFreezeFix") == Some(&"1");
+        cfg.dont_ask_textures = values.get("dontask") == Some(&"1");
+        if let Some(v) = values.get("PluginVersion") {
+            cfg.last_seen_version = v.to_string();
+        }
+        cfg
     }
 }
 
@@ -140,5 +209,35 @@ mod tests {
     fn missing_file_yields_defaults() {
         let cfg = Config::load(Path::new("/nonexistent/path/wml.toml")).unwrap();
         assert_eq!(cfg.tiles_per_line, 6);
+    }
+
+    #[test]
+    fn migrates_legacy_cfg() {
+        // A short legacy file (missing the later keys) to prove tolerance.
+        let legacy = concat!(
+            "MapsFolderPath = \"C:/Users\\snipj\\AppData\\Roaming\\bakkesmod\\WorkshopMaps\"\n",
+            "Language = \"1\"\n",
+            "UnzipMethod = \"Powershell\"\n",
+            "HasSeeNewUpdateAlert = \"1\"\n",
+            "dontask = \"1\"\n",
+            "MapsDisplayMode = \"1\"\n",
+            "nbTilesPerLine = \"5\"\n",
+            "ControllerSensitivity = \"12\"\n",
+            "ControllerScrollSensitivity = \"7\"\n",
+        );
+        let cfg = Config::from_legacy_str(legacy);
+        assert_eq!(
+            cfg.maps_folder,
+            PathBuf::from("C:/Users\\snipj\\AppData\\Roaming\\bakkesmod\\WorkshopMaps")
+        );
+        assert_eq!(cfg.language, Language::French);
+        assert_eq!(cfg.display_mode, DisplayMode::Tiles);
+        assert_eq!(cfg.tiles_per_line, 5);
+        assert_eq!(cfg.controller_sensitivity, 12);
+        assert_eq!(cfg.controller_scroll_sensitivity, 7);
+        assert!(cfg.dont_ask_textures);
+        // Keys absent from this short file keep their defaults.
+        assert!(!cfg.controller_enabled);
+        assert!(!cfg.antifreeze_fix);
     }
 }

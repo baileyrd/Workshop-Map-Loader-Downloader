@@ -11,6 +11,11 @@ repository.workspace = true
 name = "workshop-map-loader"
 path = "src/main.rs"
 
+[features]
+# Gamepad navigation via gilrs. Off by default: on Linux gilrs links libudev at
+# build time. Enable with `cargo build -p wml-app --features controller`.
+controller = ["dep:gilrs"]
+
 [dependencies]
 wml-core = { path = "../wml-core" }
 anyhow.workspace = true
@@ -24,3 +29,4 @@ eframe.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
 rfd.workspace = true
+gilrs = { workspace = true, optional = true }
