@@ -31,5 +31,5 @@ open = "5"
 # GUI (wml-app). rfd uses the xdg-portal backend to avoid a compile-time GTK dependency.
 eframe = "0.29"
 egui = "0.29"
-egui_extras = { version = "0.29", features = ["image"] }
+egui_extras = { version = "0.29", features = ["image", "http"] }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }

@@ -32,7 +32,11 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "Workshop Map Loader & Downloader",
         native_options,
-        Box::new(move |_cc| Ok(Box::new(app::WmlApp::new(rt, config, config_path)))),
+        Box::new(move |cc| {
+            // Enables `egui::Image::from_uri` to fetch+decode remote previews.
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+            Ok(Box::new(app::WmlApp::new(rt, config, config_path)))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
 
