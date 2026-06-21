@@ -46,9 +46,7 @@ pub enum BridgeStatus {
 
 /// An authenticated connection to BakkesMod's RCON server.
 pub struct BakkesModBridge {
-    ws: tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<TcpStream>,
-    >,
+    ws: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>,
 }
 
 impl BakkesModBridge {

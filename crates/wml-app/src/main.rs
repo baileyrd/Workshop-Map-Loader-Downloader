@@ -1,6 +1,8 @@
 //! Standalone desktop entry point for the Workshop Map Loader & Downloader.
 
 mod app;
+mod controller;
+mod i18n;
 
 use std::sync::Arc;
 
@@ -11,13 +13,13 @@ use wml_core::config::Config;
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
     let config_path = wml_core::paths::config_file().context("resolving config path")?;
-    let config = Config::load(&config_path).context("loading config")?;
+    let legacy = wml_core::paths::legacy_cfg_candidates();
+    let config = Config::load_or_migrate(&config_path, &legacy).context("loading config")?;
 
     // One multi-threaded Tokio runtime, shared with the UI for async tasks
     // (catalog search, downloads). egui itself runs on the main thread.
