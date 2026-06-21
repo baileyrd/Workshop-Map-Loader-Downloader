@@ -9,19 +9,34 @@
 //! the command; otherwise the app stays in manager-only mode and the UI offers
 //! "open maps folder" instead of an in-app launch.
 //!
-//! Status: the wire protocol is scaffolded but not yet implemented. Wiring it up
-//! means adding a WebSocket client (e.g. `tokio-tungstenite`), performing the
-//! `rcon_password <password>` auth handshake, then sending console commands.
+//! ## Protocol note
+//!
+//! Based on the commonly documented BakkesMod RCON handshake: open a WebSocket
+//! to `ws://{host}:{port}`, send the password as the first text frame, and
+//! expect a reply containing `authyes`. Subsequent text frames are executed as
+//! console commands. This has **not** been verified against a live BakkesMod
+//! install in this environment; if the handshake differs, only [`BakkesModBridge::connect`]
+//! needs adjusting.
 
 use std::path::Path;
+use std::time::Duration;
+
+use futures_util::{SinkExt, StreamExt};
+use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::Message;
 
 use crate::config::BakkesModConfig;
 use crate::error::{Result, WmlError};
 
+/// How long to wait for the auth reply before giving up.
+const AUTH_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long to wait for a TCP connection during [`probe`].
+const PROBE_TIMEOUT: Duration = Duration::from_millis(600);
+
 /// Whether the in-app launch bridge is usable right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BridgeStatus {
-    /// Connected and authenticated; `load_workshop` will work.
+    /// The RCON port is reachable; `load_workshop` should work.
     Connected,
     /// BakkesMod not reachable; operate in manager-only mode.
     Unavailable,
@@ -29,25 +44,54 @@ pub enum BridgeStatus {
     Disabled,
 }
 
-/// Connection to BakkesMod's RCON server.
+/// An authenticated connection to BakkesMod's RCON server.
 pub struct BakkesModBridge {
-    #[allow(dead_code)]
-    config: BakkesModConfig,
+    ws: tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<TcpStream>,
+    >,
 }
 
 impl BakkesModBridge {
-    /// Attempt to connect and authenticate. Not yet implemented.
+    /// Open and authenticate an RCON connection.
     pub async fn connect(config: BakkesModConfig) -> Result<Self> {
         if !config.enabled {
-            return Err(WmlError::Config("bakkesmod bridge disabled".into()));
+            return Err(WmlError::Bridge("bridge disabled in config".into()));
         }
-        // TODO: open ws://{host}:{port}, send `rcon_password <password>`, await ok.
-        Err(WmlError::NotImplemented("BakkesModBridge::connect"))
+
+        let url = format!("ws://{}:{}", config.host, config.port);
+        let (mut ws, _resp) = tokio_tungstenite::connect_async(url)
+            .await
+            .map_err(|e| WmlError::Bridge(format!("connect failed: {e}")))?;
+
+        // Authenticate: the password is the first frame.
+        ws.send(Message::Text(config.password.clone()))
+            .await
+            .map_err(|e| WmlError::Bridge(format!("sending password failed: {e}")))?;
+
+        // Expect a reply acknowledging the auth.
+        let reply = tokio::time::timeout(AUTH_TIMEOUT, ws.next())
+            .await
+            .map_err(|_| WmlError::Bridge("timed out waiting for auth reply".into()))?;
+
+        match reply {
+            Some(Ok(Message::Text(t))) if t.contains("authyes") => Ok(Self { ws }),
+            Some(Ok(Message::Text(t))) => {
+                Err(WmlError::Bridge(format!("authentication rejected: {t}")))
+            }
+            Some(Ok(_)) => Err(WmlError::Bridge(
+                "unexpected non-text reply during auth".into(),
+            )),
+            Some(Err(e)) => Err(WmlError::Bridge(e.to_string())),
+            None => Err(WmlError::Bridge("connection closed during auth".into())),
+        }
     }
 
-    /// Send a raw console command over RCON. Not yet implemented.
-    pub async fn execute(&mut self, _command: &str) -> Result<()> {
-        Err(WmlError::NotImplemented("BakkesModBridge::execute"))
+    /// Send a raw console command over RCON.
+    pub async fn execute(&mut self, command: &str) -> Result<()> {
+        self.ws
+            .send(Message::Text(command.to_string()))
+            .await
+            .map_err(|e| WmlError::Bridge(format!("sending command failed: {e}")))
     }
 
     /// Tell the game to load a workshop map by its `.upk`/`.udk` path.
@@ -55,14 +99,23 @@ impl BakkesModBridge {
         let command = format!("load_workshop \"{}\"", upk_path.display());
         self.execute(&command).await
     }
+
+    /// Close the connection cleanly.
+    pub async fn close(mut self) {
+        let _ = self.ws.close(None).await;
+    }
 }
 
-/// Quick reachability probe (e.g. TCP connect to the RCON port) without a full
-/// handshake. Not yet implemented; returns [`BridgeStatus::Disabled`] when off.
+/// Quick reachability probe: a short TCP connect to the RCON port. A successful
+/// connect is reported as [`BridgeStatus::Connected`] (the full auth handshake
+/// happens later, when a map is actually launched).
 pub async fn probe(config: &BakkesModConfig) -> BridgeStatus {
     if !config.enabled {
         return BridgeStatus::Disabled;
     }
-    // TODO: attempt a short TCP/WS connect to decide Connected vs Unavailable.
-    BridgeStatus::Unavailable
+    let addr = format!("{}:{}", config.host, config.port);
+    match tokio::time::timeout(PROBE_TIMEOUT, TcpStream::connect(&addr)).await {
+        Ok(Ok(_)) => BridgeStatus::Connected,
+        _ => BridgeStatus::Unavailable,
+    }
 }

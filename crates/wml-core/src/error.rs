@@ -18,6 +18,9 @@ pub enum WmlError {
     #[error("config error: {0}")]
     Config(String),
 
+    #[error("bakkesmod bridge error: {0}")]
+    Bridge(String),
+
     #[error("toml deserialize error: {0}")]
     TomlDe(#[from] toml::de::Error),
 

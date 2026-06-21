@@ -186,6 +186,21 @@ RL players that a Windows-only DLL can never serve.
    `.cfg`, optional `gilrs` controller support, structured logging, packaging
    (installer / zip instead of "drop a DLL in the plugins folder").
 
+### Implementation status
+
+- ✅ **Step 1** — `wml-core`: library scanning, catalog client, streamed
+  download + zip extraction, install pipeline, TOML config, path discovery.
+  Unit tests passing.
+- ✅ **Step 2** — `wml-app` egui shell: Library + Search tabs, async search with
+  preview thumbnails, download with progress + release picker, `rfd` folder
+  picker.
+- ✅ **Step 3** — launch bridge: `BakkesModBridge` RCON client (`connect` /
+  `execute` / `load_workshop`) over a WebSocket, a TCP reachability `probe`, a
+  "Play" button, and the manager-only fallback ("Open Folder" + status when
+  BakkesMod is not connected). *The RCON handshake is compile-verified but not
+  yet validated against a live BakkesMod — see §7.*
+- ⏳ **Step 4** — polish (i18n, legacy `.cfg` migration, controller, packaging).
+
 ---
 
 ## 7. Risks / open questions

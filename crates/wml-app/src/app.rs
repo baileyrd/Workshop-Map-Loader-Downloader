@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
+use wml_core::bakkesmod::BridgeStatus;
 use wml_core::catalog::{CatalogClient, MapResult, Release};
 use wml_core::config::Config;
 use wml_core::download::Progress;
@@ -47,6 +48,12 @@ enum DownloadMsg {
     Error(String),
 }
 
+/// Result of a background map-launch attempt via the BakkesMod bridge.
+enum LaunchMsg {
+    Ok(String),
+    Err(String),
+}
+
 /// Root application state.
 pub struct WmlApp {
     /// Shared Tokio runtime handle for spawning async tasks.
@@ -79,6 +86,15 @@ pub struct WmlApp {
     download_tx: Sender<DownloadMsg>,
     download_rx: Receiver<DownloadMsg>,
 
+    // BakkesMod bridge (launch)
+    bridge_status: BridgeStatus,
+    bridge_tx: Sender<BridgeStatus>,
+    bridge_rx: Receiver<BridgeStatus>,
+    probed_once: bool,
+    launching: bool,
+    launch_tx: Sender<LaunchMsg>,
+    launch_rx: Receiver<LaunchMsg>,
+
     status: String,
 }
 
@@ -87,6 +103,8 @@ impl WmlApp {
         let maps = wml_core::library::scan_maps(&config.maps_folder).unwrap_or_default();
         let (search_tx, search_rx) = std::sync::mpsc::channel();
         let (download_tx, download_rx) = std::sync::mpsc::channel();
+        let (bridge_tx, bridge_rx) = std::sync::mpsc::channel();
+        let (launch_tx, launch_rx) = std::sync::mpsc::channel();
         Self {
             rt,
             catalog: CatalogClient::default(),
@@ -109,6 +127,13 @@ impl WmlApp {
             download_progress: None,
             download_tx,
             download_rx,
+            bridge_status: BridgeStatus::Unavailable,
+            bridge_tx,
+            bridge_rx,
+            probed_once: false,
+            launching: false,
+            launch_tx,
+            launch_rx,
             status: String::new(),
         }
     }
@@ -252,12 +277,75 @@ impl WmlApp {
             }
         }
     }
+
+    /// Spawn a reachability probe for the BakkesMod RCON port.
+    fn start_probe(&mut self, ctx: &egui::Context) {
+        let cfg = self.config.bakkesmod.clone();
+        let tx = self.bridge_tx.clone();
+        let ctx = ctx.clone();
+        self.rt.spawn(async move {
+            let status = wml_core::bakkesmod::probe(&cfg).await;
+            let _ = tx.send(status);
+            ctx.request_repaint();
+        });
+    }
+
+    fn poll_bridge(&mut self) {
+        while let Ok(status) = self.bridge_rx.try_recv() {
+            self.bridge_status = status;
+        }
+    }
+
+    /// Connect to BakkesMod and send `load_workshop` for `upk`.
+    fn start_launch(&mut self, ctx: &egui::Context, name: String, upk: PathBuf) {
+        if self.launching {
+            return;
+        }
+        self.launching = true;
+        self.status = format!("Launching \"{name}\"…");
+
+        let cfg = self.config.bakkesmod.clone();
+        let tx = self.launch_tx.clone();
+        let ctx = ctx.clone();
+        self.rt.spawn(async move {
+            let result = async {
+                let mut bridge = wml_core::bakkesmod::BakkesModBridge::connect(cfg).await?;
+                bridge.load_workshop(&upk).await?;
+                bridge.close().await;
+                Ok::<(), wml_core::WmlError>(())
+            }
+            .await;
+
+            let msg = match result {
+                Ok(()) => LaunchMsg::Ok(name),
+                Err(e) => LaunchMsg::Err(e.to_string()),
+            };
+            let _ = tx.send(msg);
+            ctx.request_repaint();
+        });
+    }
+
+    fn poll_launch(&mut self) {
+        while let Ok(msg) = self.launch_rx.try_recv() {
+            self.launching = false;
+            self.status = match msg {
+                LaunchMsg::Ok(name) => format!("Sent load_workshop for \"{name}\" to BakkesMod."),
+                LaunchMsg::Err(e) => format!("Launch failed: {e}"),
+            };
+        }
+    }
 }
 
 impl eframe::App for WmlApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.probed_once {
+            self.probed_once = true;
+            self.start_probe(ctx);
+        }
         self.poll_search();
         self.poll_download();
+        self.poll_bridge();
+        self.poll_launch();
 
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -297,6 +385,8 @@ impl eframe::App for WmlApp {
 
 impl WmlApp {
     fn library_tab(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+
         ui.horizontal(|ui| {
             ui.label("Maps folder:");
             let mut folder = self.config.maps_folder.display().to_string();
@@ -315,12 +405,34 @@ impl WmlApp {
             }
         });
 
+        // BakkesMod bridge status + manual recheck.
+        ui.horizontal(|ui| {
+            let (color, text) = match self.bridge_status {
+                BridgeStatus::Connected => (egui::Color32::GREEN, "Connected"),
+                BridgeStatus::Unavailable => (egui::Color32::YELLOW, "Not reachable"),
+                BridgeStatus::Disabled => (egui::Color32::GRAY, "Disabled"),
+            };
+            ui.label("BakkesMod:");
+            ui.colored_label(color, text);
+            if ui.button("Recheck").clicked() {
+                self.start_probe(&ctx);
+            }
+            if self.bridge_status != BridgeStatus::Connected {
+                ui.label("— in-game launch unavailable; use Open Folder and load in-game.");
+            }
+        });
+
         ui.separator();
 
         ui.horizontal(|ui| {
             ui.label("Search:");
             ui.text_edit_singleline(&mut self.filter);
         });
+
+        // Deferred actions (avoid borrowing self while iterating self.maps).
+        let mut to_launch: Option<(String, PathBuf)> = None;
+        let mut to_open: Option<PathBuf> = None;
+        let can_launch = self.bridge_status == BridgeStatus::Connected && !self.launching;
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             let filtered = wml_core::library::filter_maps(&self.maps, &self.filter);
@@ -333,10 +445,38 @@ impl WmlApp {
                     if map.needs_extraction() {
                         ui.colored_label(egui::Color32::YELLOW, "Needs extraction");
                     }
-                    // TODO: preview image, "Play" (via BakkesMod bridge), context menu.
+
+                    ui.horizontal(|ui| {
+                        let playable = map.is_loadable();
+                        let play = ui.add_enabled(
+                            playable && can_launch,
+                            egui::Button::new("▶ Play"),
+                        );
+                        if play.clicked() {
+                            if let Some(upk) = &map.upk_file {
+                                to_launch = Some((map.name.clone(), upk.clone()));
+                            }
+                        }
+                        if playable && self.bridge_status != BridgeStatus::Connected {
+                            play.on_hover_text("BakkesMod not connected");
+                        }
+                        if ui.button("Open Folder").clicked() {
+                            to_open = Some(map.folder.clone());
+                        }
+                    });
+                    // TODO: preview image, delete, context menu.
                 });
             }
         });
+
+        if let Some((name, upk)) = to_launch {
+            self.start_launch(&ctx, name, upk);
+        }
+        if let Some(folder) = to_open {
+            if let Err(e) = open::that(&folder) {
+                self.status = format!("Failed to open folder: {e}");
+            }
+        }
     }
 
     fn search_tab(&mut self, ui: &mut egui::Ui) {
