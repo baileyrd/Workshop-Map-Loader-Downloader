@@ -205,8 +205,8 @@ RL players that a Windows-only DLL can never serve.
   - EN/FR i18n for UI labels/buttons (`wml-app/src/i18n.rs`) with a language
     selector; transient status-line text stays English for now.
   - Gamepad support behind the `controller` cargo feature (gilrs; off by default
-    because it links libudev on Linux). *Compile-verified only with the feature
-    off — the gilrs path is not built in this environment; see §7.*
+    because it links libudev on Linux). Compile-verified with the feature on
+    (after installing libudev) and covered by a dedicated CI job.
   - Packaging: release profile (thin LTO, strip), CI workflow (fmt + clippy
     `-D warnings` + test + Linux/Windows release build), and `BUILDING.md`.
 
@@ -221,10 +221,6 @@ RL players that a Windows-only DLL can never serve.
   `9876`, `rcon_password`) and routes console commands through it, but the exact
   handshake and `load_workshop` behavior over RCON must be verified against a
   live install before committing to it as the launch path.
-- **Gamepad path unbuilt here:** the `controller` feature pulls gilrs, which
-  links libudev on Linux (absent in this dev environment), so that code path is
-  written against the gilrs API but not compile-checked here. CI on a runner
-  with libudev (or Windows) would cover it.
 - **Distribution:** a standalone app needs an installer/updater story; it no
   longer rides BakkesMod's plugin distribution.
 

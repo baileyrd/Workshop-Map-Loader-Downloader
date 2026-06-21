@@ -42,3 +42,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build release binary
         run: cargo build -p wml-app --release
+
+  controller:
+    name: build app + controller (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install libudev (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - name: Clippy (controller feature)
+        run: cargo clippy -p wml-app --features controller --all-targets -- -D warnings
+      - name: Build (controller feature)
+        run: cargo build -p wml-app --features controller
+
