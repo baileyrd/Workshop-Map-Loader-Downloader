@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wml-core",
+    "crates/wml-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+repository = "https://github.com/baileyrd/Workshop-Map-Loader-Downloader"
+
+# Shared dependency versions so the two crates stay in lockstep.
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "io-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+futures-util = "0.3"
+zip = "2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+directories = "5"
+open = "5"
+# GUI (wml-app). rfd uses the xdg-portal backend to avoid a compile-time GTK dependency.
+eframe = "0.29"
+egui = "0.29"
+egui_extras = { version = "0.29", features = ["image"] }
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }

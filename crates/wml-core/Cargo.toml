@@ -1,0 +1,25 @@
+[package]
+name = "wml-core"
+description = "Game-independent core logic for the Workshop Map Loader: library scanning, catalog search, downloads, config, and the BakkesMod RCON bridge."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+zip.workspace = true
+directories.workspace = true
+open.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

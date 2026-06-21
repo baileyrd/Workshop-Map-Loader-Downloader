@@ -1,0 +1,26 @@
+[package]
+name = "wml-app"
+description = "Standalone desktop UI for the Workshop Map Loader & Downloader (egui/eframe)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "workshop-map-loader"
+path = "src/main.rs"
+
+[dependencies]
+wml-core = { path = "../wml-core" }
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+image.workspace = true
+open.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_extras.workspace = true
+rfd.workspace = true
