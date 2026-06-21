@@ -364,3 +364,7 @@ FodyWeavers.xsd
 plugins/WorkshopMapLoader.dll
 plugins/WorkshopMapLoader.exp
 plugins/WorkshopMapLoader.lib
+
+# Rust
+/target
+**/*.rs.bk
